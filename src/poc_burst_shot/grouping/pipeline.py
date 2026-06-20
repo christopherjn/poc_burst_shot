@@ -2,6 +2,7 @@ import logging
 import uuid
 from collections import defaultdict
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 
@@ -18,12 +19,25 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_SUFFIXES = {".jpg", ".jpeg", ".png", ".heic", ".webp", ".tiff", ".tif"}
 
+# Called with (fraction_complete in [0, 1], human-readable message).
+ProgressCallback = Callable[[float, str], None]
 
-def _build_records(paths: list[Path]) -> list[ImageRecord]:
+
+def _noop_progress(fraction: float, message: str) -> None:
+    pass
+
+
+def _build_records(
+    paths: list[Path],
+    on_each: Callable[[int, int], None] | None = None,
+) -> list[ImageRecord]:
     records = []
-    for path in paths:
+    total = len(paths)
+    for i, path in enumerate(paths, 1):
         if path.suffix.lower() not in SUPPORTED_SUFFIXES:
             logger.warning("Unsupported file type, skipping: %s", path)
+            if on_each:
+                on_each(i, total)
             continue
         exif = extract(path)
         records.append(ImageRecord(
@@ -31,6 +45,8 @@ def _build_records(paths: list[Path]) -> list[ImageRecord]:
             burst_uuid=exif["burst_uuid"],
             timestamp=exif["timestamp"],
         ))
+        if on_each:
+            on_each(i, total)
     return records
 
 
@@ -64,14 +80,21 @@ def _group_by_exif_uuid(
     return exif_groups, unresolved
 
 
-def _visual_cluster(records: list[ImageRecord]) -> list[BurstGroup]:
+def _visual_cluster(
+    records: list[ImageRecord],
+    cluster_selection_epsilon: float | None = None,
+    on_load: Callable[[int, int], None] | None = None,
+) -> list[BurstGroup]:
     """Stage 1: embed + HDBSCAN cluster on records that had no BurstUUID."""
     embedder = Embedder()
 
     images = []
     valid_records = []
-    for record in records:
+    total = len(records)
+    for i, record in enumerate(records, 1):
         img = load_image(record.path)
+        if on_load:
+            on_load(i, total)
         if img is None:
             logger.warning("Could not load image, treating as singleton: %s", record.path)
             continue
@@ -86,7 +109,10 @@ def _visual_cluster(records: list[ImageRecord]) -> list[BurstGroup]:
     for record, vec in zip(valid_records, embeddings):
         record.embedding = vec
 
-    labels = cluster(embeddings)
+    if cluster_selection_epsilon is None:
+        labels = cluster(embeddings)
+    else:
+        labels = cluster(embeddings, cluster_selection_epsilon=cluster_selection_epsilon)
 
     label_map: dict[int, list[ImageRecord]] = defaultdict(list)
     for record, label in zip(valid_records, labels):
@@ -114,33 +140,59 @@ def _visual_cluster(records: list[ImageRecord]) -> list[BurstGroup]:
     return groups
 
 
-def run(paths: list[Path]) -> list[BurstGroup]:
+def run(
+    paths: list[Path],
+    cluster_selection_epsilon: float | None = None,
+    progress_callback: ProgressCallback | None = None,
+) -> list[BurstGroup]:
     """
     Full grouping pipeline. Returns a list of BurstGroups.
     Each group has grouping_method: 'exif_uuid' | 'visual' | 'singleton'
-    """
-    records = _build_records(paths)
 
-    # Stage 0 — EXIF fast path
+    `cluster_selection_epsilon` controls how aggressively the visual stage
+    splits: larger values merge more nearby micro-clusters (fewer, larger
+    groups). When None, the clusterer's default is used.
+
+    `progress_callback(fraction, message)` is invoked as work proceeds, with
+    `fraction` rising from 0.0 to 1.0. When None, progress is ignored.
+    """
+    progress = progress_callback or _noop_progress
+
+    # Stage 0 — read metadata (0% → 10%)
+    progress(0.0, "Reading image metadata")
+    records = _build_records(
+        paths,
+        on_each=lambda i, n: progress(0.10 * i / n, f"Reading metadata ({i}/{n})"),
+    )
     exif_groups, unresolved = _group_by_exif_uuid(records)
 
-    # Stage 1 — visual clustering for images without a BurstUUID
-    visual_groups = _visual_cluster(unresolved)
+    # Stage 1 — load + embed + cluster images without a BurstUUID (10% → 70%)
+    progress(0.10, "Loading images")
+    visual_groups = _visual_cluster(
+        unresolved,
+        cluster_selection_epsilon,
+        on_load=lambda i, n: progress(0.10 + 0.40 * i / n, f"Loading images ({i}/{n})"),
+    )
+    progress(0.70, "Clustering")
 
-    # Stage 2 — verify visual groups, split false merges (skip singletons)
+    # Stage 2 — verify visual groups, split false merges (70% → 90%)
+    progress(0.70, "Verifying groups")
     verified_groups = []
-    for group in visual_groups:
-        if group.grouping_method == "singleton":
-            verified_groups.append(group)
-        else:
-            verified_groups.extend(verify_and_split(group))
+    candidates = [g for g in visual_groups if g.grouping_method != "singleton"]
+    verified_groups.extend(g for g in visual_groups if g.grouping_method == "singleton")
+    for i, group in enumerate(candidates, 1):
+        verified_groups.extend(verify_and_split(group))
+        if candidates:
+            progress(0.70 + 0.20 * i / len(candidates), f"Verifying groups ({i}/{len(candidates)})")
 
     logger.info("Stage 2: %d groups after verification", len(verified_groups))
 
-    # Stage 3 — time sub-split within every group
+    # Stage 3 — time sub-split within every group (90% → 100%)
+    progress(0.90, "Splitting by time")
     final_groups = []
     for group in exif_groups + verified_groups:
         final_groups.extend(split_by_time(group))
 
     logger.info("Stage 3: %d final groups", len(final_groups))
+    progress(1.0, "Complete")
     return final_groups

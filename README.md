@@ -52,6 +52,54 @@ Found 3 group(s):
     /photos/trip/IMG_0200.jpg
 ```
 
+## Web UI
+
+A Streamlit frontend (in `ui/`) shows the resulting clusters as image grids. It
+talks to a small FastAPI backend that wraps the grouping pipeline.
+
+Start both processes and wire them together with one command:
+
+```bash
+make burst
+```
+
+This installs the UI dependency group, launches the backend
+(`http://127.0.0.1:8000`), waits for it to become healthy, then opens the
+Streamlit frontend (`http://127.0.0.1:8501`). Enter an absolute folder path,
+click **Group images**, and a live **progress bar (0–100%)** tracks the pipeline
+stages while it works; the clusters then render as thumbnail grids. Quitting the
+frontend (Ctrl-C) shuts the backend down too.
+
+A **Grouping aggressiveness** slider (labelled *Create fewer groups* ◀ … ▶
+*Create more groups*) controls how eagerly the visual stage splits: drag it lower
+if separate bursts are being split apart too much (this raises the cluster merge
+distance, producing fewer, larger groups). It maps onto the
+`cluster_selection_epsilon` knob described under
+[Tuning the grouping](#tuning-the-grouping).
+
+Under the hood, `POST /group` starts the job in a background thread and returns a
+job id; the frontend polls `GET /progress/{job_id}` for the 0–1 progress fraction
+and the final result.
+
+Other targets:
+
+```bash
+make backend    # run only the FastAPI service
+make frontend   # run only the Streamlit app (expects a backend already up)
+make install    # install core + UI dependencies
+```
+
+Ports are configurable: `make burst BACKEND_PORT=9000 FRONTEND_PORT=9001`.
+
+## Tuning the grouping
+
+If groups come out too fragmented (clusters that should be one burst getting
+split apart), raise `CLUSTER_SELECTION_EPSILON` in
+`src/poc_burst_shot/grouping/clusterer.py`. Because embeddings are
+L2-normalised, the distance lives in `[0, 2]`; a larger epsilon merges more
+nearby micro-clusters into a single group (less aggressive splitting), while
+`0.0` restores HDBSCAN's default finer-grained behaviour.
+
 ## Using the pipeline programmatically
 
 ```python
