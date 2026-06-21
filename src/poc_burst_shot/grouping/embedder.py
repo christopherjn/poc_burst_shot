@@ -7,8 +7,24 @@ import numpy as np
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD  = [0.229, 0.224, 0.225]
 
+# Embedding backbones the user can pick from in the UI. All are timm models that
+# expose a pooled feature vector when created with num_classes=0, and work with
+# the simple 224x224 + ImageNet-normalisation transform below. Keys are the timm
+# model names; values are human-readable labels for the dropdown.
+AVAILABLE_MODELS: dict[str, str] = {
+    "efficientnet_b0": "EfficientNet-B0 (default)",
+    "resnet50": "ResNet-50",
+    "mobilenetv3_large_100": "MobileNetV3-Large",
+    "convnext_tiny": "ConvNeXt-Tiny",
+    "densenet121": "DenseNet-121",
+    "vit_base_patch16_224": "ViT-Base/16",
+}
+
+DEFAULT_MODEL = "efficientnet_b0"
+
+
 class Embedder:
-    def __init__(self, model_name: str = "efficientnet_b0", device: str | None = None):
+    def __init__(self, model_name: str = DEFAULT_MODEL, device: str | None = None):
 
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -35,7 +51,8 @@ class Embedder:
         return vec / np.linalg.norm(vec)
 
     def embed_batch(self, images: list[Image.Image]) -> np.ndarray:
-        """Embed a list of PIL images. Returns shape (N, 1280)."""
+        """Embed a list of PIL images. Returns shape (N, D), where D depends on
+        the chosen backbone (e.g. 1280 for EfficientNet-B0)."""
         tensors = torch.stack([self.transform(img) for img in images]).to(self.device)
 
         with torch.no_grad():

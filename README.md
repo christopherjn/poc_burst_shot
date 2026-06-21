@@ -77,9 +77,17 @@ distance, producing fewer, larger groups). It maps onto the
 `cluster_selection_epsilon` knob described under
 [Tuning the grouping](#tuning-the-grouping).
 
-Under the hood, `POST /group` starts the job in a background thread and returns a
-job id; the frontend polls `GET /progress/{job_id}` for the 0–1 progress fraction
-and the final result.
+An **Embedding model** dropdown selects the backbone used by the visual stage.
+EfficientNet-B0 is the default; ResNet-50, MobileNetV3-Large, ConvNeXt-Tiny,
+DenseNet-121, and ViT-Base/16 are also available (the backend lists them via
+`GET /models`). Switch to **Compare models** mode to pick two or more backbones
+and group the same folder with each, rendering the results side by side so you
+can see how the choice of model changes the clustering.
+
+Under the hood, `POST /group` (with an optional `model_name`) starts the job in a
+background thread and returns a job id; the frontend polls `GET /progress/{job_id}`
+for the 0–1 progress fraction and the final result. Compare mode simply runs one
+job per selected model.
 
 Other targets:
 

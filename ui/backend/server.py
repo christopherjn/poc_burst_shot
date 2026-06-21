@@ -17,6 +17,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from poc_burst_shot.grouping.embedder import AVAILABLE_MODELS, DEFAULT_MODEL
 from poc_burst_shot.grouping.pipeline import run
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -35,6 +36,18 @@ class GroupRequest(BaseModel):
     # Larger values merge more nearby micro-clusters (less aggressive grouping).
     # None falls back to the clusterer's built-in default.
     cluster_selection_epsilon: float | None = None
+    # timm backbone for the visual embedding stage. None uses the default model.
+    model_name: str | None = None
+
+
+class ModelInfo(BaseModel):
+    name: str
+    label: str
+
+
+class ModelsResponse(BaseModel):
+    default: str
+    models: list[ModelInfo]
 
 
 class GroupMember(BaseModel):
@@ -52,6 +65,7 @@ class Group(BaseModel):
 class GroupResponse(BaseModel):
     folder: str
     image_count: int
+    model_name: str
     groups: list[Group]
 
 
@@ -78,10 +92,11 @@ def _set_job(job_id: str, **fields) -> None:
         _jobs[job_id] = current.model_copy(update=fields)
 
 
-def _build_payload(folder: Path, paths: list[Path], groups) -> GroupResponse:
+def _build_payload(folder: Path, paths: list[Path], groups, model_name: str) -> GroupResponse:
     return GroupResponse(
         folder=str(folder),
         image_count=len(paths),
+        model_name=model_name,
         groups=[
             Group(
                 group_id=group.group_id,
@@ -100,18 +115,29 @@ def _build_payload(folder: Path, paths: list[Path], groups) -> GroupResponse:
     )
 
 
-def _run_job(job_id: str, folder: Path, paths: list[Path], epsilon: float | None) -> None:
+def _run_job(
+    job_id: str,
+    folder: Path,
+    paths: list[Path],
+    epsilon: float | None,
+    model_name: str,
+) -> None:
     def report(fraction: float, message: str) -> None:
         _set_job(job_id, progress=fraction, message=message)
 
     try:
-        groups = run(paths, cluster_selection_epsilon=epsilon, progress_callback=report)
+        groups = run(
+            paths,
+            cluster_selection_epsilon=epsilon,
+            progress_callback=report,
+            model_name=model_name,
+        )
         _set_job(
             job_id,
             status="done",
             progress=1.0,
             message="Complete",
-            result=_build_payload(folder, paths, groups),
+            result=_build_payload(folder, paths, groups, model_name),
         )
     except Exception as exc:  # surface failures to the frontend
         logger.exception("Grouping job %s failed", job_id)
@@ -123,6 +149,14 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/models", response_model=ModelsResponse)
+def list_models() -> ModelsResponse:
+    return ModelsResponse(
+        default=DEFAULT_MODEL,
+        models=[ModelInfo(name=name, label=label) for name, label in AVAILABLE_MODELS.items()],
+    )
+
+
 @app.post("/group", response_model=StartResponse)
 def group_images(request: GroupRequest) -> StartResponse:
     folder = Path(request.folder).expanduser().resolve()
@@ -131,6 +165,13 @@ def group_images(request: GroupRequest) -> StartResponse:
         raise HTTPException(status_code=404, detail=f"Path does not exist: {folder}")
     if not folder.is_dir():
         raise HTTPException(status_code=400, detail=f"Not a directory: {folder}")
+
+    model_name = request.model_name or DEFAULT_MODEL
+    if model_name not in AVAILABLE_MODELS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown model: {model_name}. Choose one of {sorted(AVAILABLE_MODELS)}.",
+        )
 
     paths = sorted(
         p for p in folder.iterdir() if p.suffix.lower() in IMAGE_SUFFIXES
@@ -147,15 +188,16 @@ def group_images(request: GroupRequest) -> StartResponse:
         )
 
     logger.info(
-        "Job %s: grouping %d image(s) in %s (epsilon=%s)",
+        "Job %s: grouping %d image(s) in %s (epsilon=%s, model=%s)",
         job_id,
         len(paths),
         folder,
         request.cluster_selection_epsilon,
+        model_name,
     )
     thread = threading.Thread(
         target=_run_job,
-        args=(job_id, folder, paths, request.cluster_selection_epsilon),
+        args=(job_id, folder, paths, request.cluster_selection_epsilon, model_name),
         daemon=True,
     )
     thread.start()

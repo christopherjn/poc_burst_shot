@@ -7,7 +7,7 @@ from typing import Callable
 import numpy as np
 
 from poc_burst_shot.grouping.clusterer import cluster
-from poc_burst_shot.grouping.embedder import Embedder
+from poc_burst_shot.grouping.embedder import DEFAULT_MODEL, Embedder
 from poc_burst_shot.grouping.exif_extractor import extract
 from poc_burst_shot.grouping.time_splitter import split_by_time
 from poc_burst_shot.grouping.verifier import verify_and_split
@@ -84,9 +84,10 @@ def _visual_cluster(
     records: list[ImageRecord],
     cluster_selection_epsilon: float | None = None,
     on_load: Callable[[int, int], None] | None = None,
+    model_name: str = DEFAULT_MODEL,
 ) -> list[BurstGroup]:
     """Stage 1: embed + HDBSCAN cluster on records that had no BurstUUID."""
-    embedder = Embedder()
+    embedder = Embedder(model_name=model_name)
 
     images = []
     valid_records = []
@@ -144,6 +145,7 @@ def run(
     paths: list[Path],
     cluster_selection_epsilon: float | None = None,
     progress_callback: ProgressCallback | None = None,
+    model_name: str = DEFAULT_MODEL,
 ) -> list[BurstGroup]:
     """
     Full grouping pipeline. Returns a list of BurstGroups.
@@ -152,6 +154,9 @@ def run(
     `cluster_selection_epsilon` controls how aggressively the visual stage
     splits: larger values merge more nearby micro-clusters (fewer, larger
     groups). When None, the clusterer's default is used.
+
+    `model_name` selects the timm embedding backbone used by the visual stage
+    (see `embedder.AVAILABLE_MODELS`).
 
     `progress_callback(fraction, message)` is invoked as work proceeds, with
     `fraction` rising from 0.0 to 1.0. When None, progress is ignored.
@@ -172,6 +177,7 @@ def run(
         unresolved,
         cluster_selection_epsilon,
         on_load=lambda i, n: progress(0.10 + 0.40 * i / n, f"Loading images ({i}/{n})"),
+        model_name=model_name,
     )
     progress(0.70, "Clustering")
 
