@@ -26,46 +26,12 @@ def _build_records(paths: list[Path]) -> list[ImageRecord]:
             logger.warning("Unsupported file type, skipping: %s", path)
             continue
         exif = extract(path)
-        records.append(ImageRecord(
-            path=path,
-            burst_uuid=exif["burst_uuid"],
-            timestamp=exif["timestamp"],
-        ))
+        records.append(ImageRecord(path=path, timestamp=exif["timestamp"]))
     return records
 
 
-def _group_by_exif_uuid(
-    records: list[ImageRecord],
-) -> tuple[list[BurstGroup], list[ImageRecord]]:
-    """Stage 0: group by BurstUUID. Returns (exif_groups, unresolved_records)."""
-    uuid_map: dict[str, list[ImageRecord]] = defaultdict(list)
-    unresolved: list[ImageRecord] = []
-
-    for record in records:
-        if record.burst_uuid:
-            uuid_map[record.burst_uuid].append(record)
-        else:
-            unresolved.append(record)
-
-    exif_groups = [
-        BurstGroup(
-            group_id=str(uuid.uuid4()),
-            members=members,
-            grouping_method="exif_uuid",
-        )
-        for members in uuid_map.values()
-    ]
-
-    logger.info(
-        "Stage 0: %d EXIF groups, %d unresolved images",
-        len(exif_groups),
-        len(unresolved),
-    )
-    return exif_groups, unresolved
-
-
 def _visual_cluster(records: list[ImageRecord]) -> list[BurstGroup]:
-    """Stage 1: embed + HDBSCAN cluster on records that had no BurstUUID."""
+    """Stage 1: embed + HDBSCAN cluster."""
     embedder = Embedder()
 
     images = []
@@ -117,15 +83,12 @@ def _visual_cluster(records: list[ImageRecord]) -> list[BurstGroup]:
 def run(paths: list[Path]) -> list[BurstGroup]:
     """
     Full grouping pipeline. Returns a list of BurstGroups.
-    Each group has grouping_method: 'exif_uuid' | 'visual' | 'singleton'
+    Each group has grouping_method: 'visual' | 'singleton'
     """
     records = _build_records(paths)
 
-    # Stage 0 — EXIF fast path
-    exif_groups, unresolved = _group_by_exif_uuid(records)
-
-    # Stage 1 — visual clustering for images without a BurstUUID
-    visual_groups = _visual_cluster(unresolved)
+    # Stage 1 — visual clustering
+    visual_groups = _visual_cluster(records)
 
     # Stage 2 — verify visual groups, split false merges (skip singletons)
     verified_groups = []
@@ -139,7 +102,7 @@ def run(paths: list[Path]) -> list[BurstGroup]:
 
     # Stage 3 — time sub-split within every group
     final_groups = []
-    for group in exif_groups + verified_groups:
+    for group in verified_groups:
         final_groups.extend(split_by_time(group))
 
     logger.info("Stage 3: %d final groups", len(final_groups))

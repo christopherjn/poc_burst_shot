@@ -1,30 +1,10 @@
-import json
 import logging
-import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
+from PIL import ExifTags, Image
+
 logger = logging.getLogger(__name__)
-
-# EXIF tag IDs from the Exif spec
-_TAG_DATETIME_ORIGINAL = 36867
-_TAG_SUBSEC_TIME_ORIGINAL = 37521
-
-
-def _run_exiftool(path: Path) -> dict:
-    """Call exiftool and return its JSON output as a dict."""
-    try:
-        result = subprocess.run(
-            ["exiftool", "-json", "-BurstUUID", "-ContentIdentifier",
-             "-DateTimeOriginal", "-SubSecTimeOriginal", str(path)],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        data = json.loads(result.stdout)
-        return data[0] if data else {}
-    except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError):
-        return {}
 
 
 def _parse_timestamp(dt_str: str | None, subsec: str | None) -> datetime | None:
@@ -32,12 +12,10 @@ def _parse_timestamp(dt_str: str | None, subsec: str | None) -> datetime | None:
         return None
     try:
         # standard EXIF format: "2024:01:15 10:23:45"
-        dt = datetime.strptime(dt_str, "%Y:%m:%d %H:%M:%S")
-        if subsec:
+        dt = datetime.strptime(dt_str.strip("\x00 "), "%Y:%m:%d %H:%M:%S")
+        if subsec and subsec.strip("\x00 ").isdigit():
             # subsec is a string like "123" meaning 0.123 seconds
-            fraction = float(f"0.{subsec.strip()}")
-            from datetime import timedelta
-            dt = dt + timedelta(seconds=fraction)
+            dt += timedelta(seconds=float(f"0.{subsec.strip(chr(0) + ' ')}"))
         return dt
     except ValueError:
         return None
@@ -45,38 +23,19 @@ def _parse_timestamp(dt_str: str | None, subsec: str | None) -> datetime | None:
 
 def extract(path: Path) -> dict:
     """
-    Extract burst UUID and timestamp from a single image file.
+    Extract the capture timestamp from a single image file.
 
     Returns a dict with keys:
-      - burst_uuid : str | None
-      - timestamp  : datetime | None
+      - timestamp : datetime | None
     """
-    result = {"burst_uuid": None, "timestamp": None}
-
-    # try exiftool first — handles HEIC Apple MakerNotes reliably
-    exif_data = _run_exiftool(path)
-    if exif_data:
-        result["burst_uuid"] = (
-            exif_data.get("BurstUUID") or exif_data.get("ContentIdentifier")
-        )
-        result["timestamp"] = _parse_timestamp(
-            exif_data.get("DateTimeOriginal"),
-            exif_data.get("SubSecTimeOriginal"),
-        )
-        return result
-
-    # fallback: Pillow for JPEG/PNG when exiftool is unavailable
+    result = {"timestamp": None}
     try:
-        from PIL import Image
-        from PIL.ExifTags import TAGS
-
-        img = Image.open(path)
-        raw_exif = img._getexif()
-        if raw_exif:
-            dt_str = raw_exif.get(_TAG_DATETIME_ORIGINAL)
-            subsec = raw_exif.get(_TAG_SUBSEC_TIME_ORIGINAL)
-            result["timestamp"] = _parse_timestamp(dt_str, subsec)
+        with Image.open(path) as img:
+            exif_ifd = img.getexif().get_ifd(ExifTags.IFD.Exif)
+        result["timestamp"] = _parse_timestamp(
+            exif_ifd.get(ExifTags.Base.DateTimeOriginal),
+            exif_ifd.get(ExifTags.Base.SubsecTimeOriginal),
+        )
     except Exception as e:
-        logger.warning("Pillow EXIF fallback failed for %s: %s", path, e)
-
+        logger.warning("EXIF read failed for %s: %s", path, e)
     return result

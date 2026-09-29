@@ -1,17 +1,16 @@
 # poc-burst-shot
 
-A proof-of-concept pipeline that groups a folder of photos into burst-shot clusters. It combines EXIF metadata, visual embeddings, geometric verification, and timestamp analysis to accurately separate images taken in rapid succession from unrelated shots.
+A proof-of-concept pipeline that groups a folder of photos into burst-shot clusters. It combines visual embeddings, geometric verification, and EXIF timestamp analysis to separate images taken in rapid succession from unrelated shots.
 
 ## How it works
 
-The pipeline runs in four stages:
+The pipeline runs in three stages:
 
-1. **EXIF fast path** — images that share a `BurstUUID` tag are immediately grouped together.
-2. **Visual clustering** — remaining images are embedded with a pretrained EfficientNet-B0 and clustered with HDBSCAN.
-3. **Geometric verification** — each visual cluster is checked with ORB feature matching + RANSAC homography to detect and split false merges.
-4. **Time sub-split** — within every group, large timestamp gaps (> 3× the median intra-group gap) trigger a further split.
+1. **Visual clustering** — images are embedded with a pretrained EfficientNet-B0 and clustered with HDBSCAN.
+2. **Geometric verification** — each visual cluster is checked with ORB feature matching + RANSAC homography to detect and split false merges.
+3. **Time sub-split** — within every group, large timestamp gaps (> 3× the median intra-group gap) trigger a further split.
 
-Each output group carries a `grouping_method` label: `exif_uuid`, `visual`, or `singleton`.
+Each output group carries a `grouping_method` label: `visual` or `singleton`.
 
 ## Installation
 
@@ -42,7 +41,7 @@ Found 12 image(s) in /photos/trip
 
 Found 3 group(s):
 
-  Group 1 [exif_uuid] — 5 image(s)
+  Group 1 [visual] — 5 image(s)
     /photos/trip/IMG_0042.jpg
     ...
   Group 2 [visual] — 4 image(s)
@@ -73,5 +72,4 @@ for group in groups:
 | `hdbscan` | Density-based clustering |
 | `opencv-python-headless` | ORB feature matching and RANSAC verification |
 | `Pillow` | Image loading and conversion |
-| `piexif` | EXIF metadata extraction |
 | `numpy` / `scikit-learn` | Numerical utilities |
