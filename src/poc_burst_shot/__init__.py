@@ -4,12 +4,11 @@ from pathlib import Path
 
 from poc_burst_shot.grouping.pipeline import run
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".tiff", ".tif", ".webp", ".bmp"}
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     try:
         raw = input("Enter path to image folder: ").strip()
     except (EOFError, KeyboardInterrupt):

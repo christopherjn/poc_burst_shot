@@ -1,13 +1,14 @@
 import uuid
 import logging
-import numpy as np
 
 from poc_burst_shot.models.burst_group import BurstGroup
 
 logger = logging.getLogger(__name__)
 
-# sub-split a visual cluster if an internal gap exceeds this multiple of the median gap
-GAP_MULTIPLIER = 3.0
+# sub-split a visual cluster wherever consecutive frames are further apart than this.
+# A fixed ceiling rather than a multiple of the median gap: continuous-drive bursts (0.1-0.2s)
+# pull the median down so far that ordinary 1-5s gaps inside one posed series get split.
+MAX_GAP_S = 60.0
 
 
 def split_by_time(group: BurstGroup) -> list[BurstGroup]:
@@ -35,11 +36,7 @@ def split_by_time(group: BurstGroup) -> list[BurstGroup]:
 
     gaps = [timestamps[i + 1] - timestamps[i] for i in range(len(timestamps) - 1)]
 
-    # adaptive threshold: GAP_MULTIPLIER × median gap
-    median_gap = float(np.median(gaps))
-    threshold = GAP_MULTIPLIER * median_gap
-
-    split_indices = [i for i, gap in enumerate(gaps) if gap > threshold]
+    split_indices = [i for i, gap in enumerate(gaps) if gap > MAX_GAP_S]
 
     if not split_indices:
         return [group]
@@ -53,10 +50,10 @@ def split_by_time(group: BurstGroup) -> list[BurstGroup]:
     sub_groups.append(sorted_members[start:])
 
     logger.info(
-        "Time-split group %s into %d sub-groups (threshold=%.2fs)",
+        "Time-split group %s into %d sub-groups (max gap %.0fs)",
         group.group_id,
         len(sub_groups),
-        threshold,
+        MAX_GAP_S,
     )
 
     return [

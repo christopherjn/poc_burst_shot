@@ -1,14 +1,16 @@
 # poc-burst-shot
 
-A proof-of-concept pipeline that groups a folder of photos into burst-shot clusters. It combines visual embeddings, geometric verification, and EXIF timestamp analysis to separate images taken in rapid succession from unrelated shots.
+A proof-of-concept pipeline that groups a folder of photos into series: bursts and posed shots taken a few frames apart. It combines self-supervised visual embeddings with EXIF capture times.
 
 ## How it works
 
 The pipeline runs in three stages:
 
-1. **Visual clustering** — images are embedded with a pretrained EfficientNet-B0 and clustered with HDBSCAN.
-2. **Geometric verification** — each visual cluster is checked with ORB feature matching + RANSAC homography to detect and split false merges.
-3. **Time sub-split** — within every group, large timestamp gaps (> 3× the median intra-group gap) trigger a further split.
+1. **Visual clustering**: images are embedded with DINOv2 ViT-S/14 and clustered with HDBSCAN.
+2. **Geometric verification** (optional, off by default): each visual cluster is checked with ORB feature matching + RANSAC homography to split false merges.
+3. **Time sub-split**: a group is split wherever consecutive frames are more than 60s apart.
+
+Images are decoded from the camera's embedded preview JPEG when present, with EXIF orientation applied. See [`eval/README.md`](eval/README.md) for the benchmark behind these choices.
 
 Each output group carries a `grouping_method` label: `visual` or `singleton`.
 
@@ -68,7 +70,7 @@ for group in groups:
 
 | Package | Purpose |
 |---|---|
-| `timm` + `torch` | EfficientNet-B0 visual embeddings |
+| `timm` + `torch` | DINOv2 ViT-S/14 visual embeddings (Apache-2.0 weights) |
 | `hdbscan` | Density-based clustering |
 | `opencv-python-headless` | ORB feature matching and RANSAC verification |
 | `Pillow` | Image loading and conversion |
