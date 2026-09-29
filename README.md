@@ -36,6 +36,14 @@ poc-burst-shot /path/to/card
 
 Without an argument you are prompted for the folder. Supported formats: `.jpg`, `.jpeg`, `.png`, `.heic`, `.heif`, `.tiff`, `.tif`, `.webp`, `.bmp`.
 
+### Browser UI
+
+```bash
+uv run --group ui streamlit run ui/app.py
+```
+
+Enter a folder path in the sidebar and press **Group photos** to see every series as a row of thumbnails, in capture order. Each thumbnail shows its file name and the time since the previous frame. Photos are analysed once per folder. After that, the similarity threshold, look-back and max-gap sliders regroup instantly, which makes it easy to check the defaults on a new kind of shoot.
+
 Example output:
 
 ```
@@ -74,5 +82,6 @@ for group in groups:
 | `timm` | DINOv2 ViT-S/14 model and weights | Apache-2.0 (code and weights) |
 | `Pillow` | Image loading, EXIF | MIT-CMU (HPND) |
 | `numpy` | Numerical utilities | BSD-3-Clause |
+| `streamlit` (`ui` group only) | Browser UI | Apache-2.0 |
 
 The DINOv2 weights are downloaded from the Hugging Face hub (`timm/vit_small_patch14_dinov2.lvd142m`) on first run.

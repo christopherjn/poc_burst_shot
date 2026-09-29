@@ -23,7 +23,7 @@ _ORIENTATION_FIX = {
 }
 
 
-def _use_embedded_preview(image: Image.Image) -> None:
+def _use_embedded_preview(image: Image.Image, min_size: tuple[int, int]) -> None:
     """Switch to the camera's embedded preview JPEG (MPF frame) when it is big enough.
 
     Camera JPEGs from Sony/Canon/Nikon/Fuji carry a ~1600px preview next to the full frame;
@@ -32,14 +32,12 @@ def _use_embedded_preview(image: Image.Image) -> None:
     if getattr(image, "n_frames", 1) < 2:
         return
     image.seek(1)
-    if image.width < _MIN_DECODE[0] or image.height < _MIN_DECODE[1]:
+    if image.width < min_size[0] or image.height < min_size[1]:
         image.seek(0)
 
 
-def load_image(path: Path) -> Image.Image | None:
-
-    # Return an upright 224 x 224 image or None if the file can't be loaded
-
+def open_upright(path: Path, min_size: tuple[int, int]) -> Image.Image | None:
+    """Decode an upright RGB image at least `min_size` large (when the file is), or None."""
     if path.suffix.lower() in RAW_SUFFIXES:
         logger.warning(f"Raw image file detected: {path}. Skipping...")
         return None
@@ -48,9 +46,9 @@ def load_image(path: Path) -> Image.Image | None:
         image = Image.open(path)
         # cameras store portrait shots sideways with an Orientation tag on the primary image
         orientation = image.getexif().get(ExifTags.Base.Orientation)
-        _use_embedded_preview(image)
+        _use_embedded_preview(image, min_size)
         # let the JPEG decoder downscale by up to 8x while decoding
-        image.draft("RGB", _MIN_DECODE)
+        image.draft("RGB", min_size)
         image.load()
     except Exception as e:
         logger.error(f"Error loading image {path}: {e}")
@@ -62,4 +60,10 @@ def load_image(path: Path) -> Image.Image | None:
     if image.mode != "RGB":
         image = image.convert("RGB")
 
-    return image.resize(TARGET_SIZE, Image.LANCZOS)
+    return image
+
+
+def load_image(path: Path) -> Image.Image | None:
+    """Return an upright 224 x 224 image or None if the file can't be loaded."""
+    image = open_upright(path, _MIN_DECODE)
+    return None if image is None else image.resize(TARGET_SIZE, Image.LANCZOS)
