@@ -1,14 +1,19 @@
 # Grouping benchmark
 
-`evaluate.py` scores the pipeline against a hand-labelled folder of photos.
+Three scripts, all run from the repo root:
 
 ```bash
-uv run python eval/evaluate.py \
-    --images /path/to/photos \
+# score the pipeline defaults (and a neighbours-only variant) per embedding model
+uv run python eval/evaluate.py --images /path/to/photos \
     --labels eval/labels/sony_a7iv_portrait_100.json \
     --models vit_small_patch14_dinov2.lvd142m efficientnet_b0 \
-    --stages fast          # skip the slow ORB-verification variants
     --show                 # list every predicted group with its true labels
+
+# sweep threshold / window / max gap per model
+uv run python eval/sweep.py --images /path/to/photos --labels eval/labels/sony_a7iv_portrait_100.json
+
+# stress tests against the tuned HDBSCAN pipeline from research/grouping-approach
+uv run --with hdbscan python eval/stress.py --images /path/to/photos --labels eval/labels/sony_a7iv_portrait_100.json
 ```
 
 `--models` takes any `timm` model name, or `tinyimage` (32x32 grayscale pixels, no learned
@@ -40,7 +45,7 @@ session. There are 26 atomic series (sizes 1-17) with 19 optional links. The har
 the same person is on the same few backdrops throughout, so series differ in pose and framing
 only. Gaps between frames are 0.17s (continuous drive) to 10s within a series.
 
-## Results (HDBSCAN pipeline, this branch)
+## Results: HDBSCAN pipeline (branch `research/grouping-approach`)
 
 Embedding models on the original pipeline (HDBSCAN `min_cluster_size=2`, no ORB), with the
 original squashed full-resolution loader:
@@ -84,3 +89,71 @@ Loader changes (no accuracy change, 9x faster embedding):
 **Tuned pipeline: DINOv2-S + HDBSCAN defaults + 60s time ceiling: pair F1 0.986, B-cubed F1
 0.973.** The only wrong merge left puts a bow-tie detail close-up with the two bow-tie framings
 around it. Every other mixed group spans an optional link.
+
+## Results: sequence grouping (this branch)
+
+### Why a different approach
+
+Photo-collection research has segmented photos **in capture order** for over twenty years.
+Event clustering (Loui & Savakis 2003, IEEE TMM; Platt et al. 2003, PhotoTOC; Cooper et al.
+2005, ACM TOMM) and "photo-worthy moment" segmentation (Gozali et al. 2012, HMM over time +
+EXIF + visual features) all compare *adjacent* photos in time and content, rather than
+clustering a collection globally. Recent open-source culling work reaches the same design,
+with capture time as the constraint and visual similarity as the link decision. It also
+reports that duplicates at shoots are mostly pose sets 2-30s apart, not sub-second bursts.
+That matches this card.
+
+HDBSCAN, by contrast, clusters the whole folder at once. It ignores the strongest signal a
+camera card offers (order), its result for one series depends on the density of everything
+else in the folder, and it has parameters with no photographic meaning.
+
+### Sweep (window 5, max gap 60s; pair F1 by cosine threshold)
+
+| Embedding | Best pair F1 | Thresholds within 0.02 of best |
+|---|---|---|
+| `vit_small_patch14_dinov2.lvd142m` | **1.000** (0.84-0.88) | 0.80-0.94 |
+| `vit_base_patch14_dinov2.lvd142m` | 1.000 (0.88) | 0.84-0.92 |
+| `efficientnet_b0.ra_in1k` | 1.000 (0.80-0.92) | 0.76-0.92 |
+| `tinyimage` | 0.992 | 0.72-0.82 |
+| `vit_base_patch16_clip_224.openai` | 0.980 | 0.90 only |
+| `vit_base_patch16_siglip_224.v2_webli` | 0.986 | 0.96 only |
+
+Once capture order is used, the embedding matters much less: even raw pixels reach 0.99.
+DINOv2-S is kept as the default for three reasons:
+
+1. It has the widest safe threshold band.
+2. It is clearly the best model under global clustering, where order cannot help.
+3. Its weights are released under Apache-2.0 by the party that trained them, on Meta's own
+   LVD-142M. EfficientNet's weights were trained on ImageNet-1k, whose terms of access limit the
+   dataset to non-commercial research. Whether that reaches trained weights is legally unsettled.
+
+The default threshold is 0.86, the middle of the perfect band. When unsure, prefer a higher
+threshold: a false split shows a photographer two stacks, but a false merge hides a distinct
+shot inside a stack.
+
+### Stress tests (`stress.py`, DINOv2-S, pair F1)
+
+| Scenario | Sequence (defaults) | window 1 | window 30 | HDBSCAN (tuned) |
+|---|---|---|---|---|
+| Benchmark as shot | **1.000** | 0.994 | 0.855 | 0.986 |
+| Two shooters interleaved, bodies distinguishable | **1.000** | 0.994 | 0.855 | 0.986 |
+| Two shooters interleaved, same camera id | **0.994** | 0.940 | 0.855 | 0.986 |
+| No EXIF timestamps (file-name order) | **1.000** | 0.994 | 0.855 | 0.986 |
+| Grouping time, 5,000 images | **0.23s** | 0.20s | 0.43s | 25.9s |
+
+- **Same camera id** matters because Sony bodies write no `BodySerialNumber`. Two A7 IVs on one
+  card folder share an id, so their frames interleave on one timeline. An earlier version
+  linked any two frames under 0.4s apart without a visual check (a "burst rule"). Here that
+  rule merged the two shooters' series (pair F1 0.850, 109 wrong merges), so it was removed.
+- **Window** trades bridging against chaining. With 1 frame, any interloper splits a series.
+  With 30 frames, similar-looking series chain together. 3-10 frames all score ≥ 0.994.
+- **Locality**: adding session B changed no grouping in session A, for either method.
+- **Runtime**: embedding dominates either way. DINOv2-S takes ~0.13s/image on a laptop CPU
+  (about 11 minutes for a 5,000-photo wedding, including preview decoding).
+
+### Limits of this evidence
+
+This is one 100-photo portrait session. It has no wedding stage or mandap shots, where
+different families pose in front of the same backdrop within seconds of each other. The
+threshold will most likely need checking there. Label one such card with the format above and
+rerun `sweep.py` before trusting the 0.86 default in production.

@@ -7,15 +7,23 @@ from PIL import ExifTags, Image
 logger = logging.getLogger(__name__)
 
 
+def _clean(value) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip("\x00 ")
+    return text or None
+
+
 def _parse_timestamp(dt_str: str | None, subsec: str | None) -> datetime | None:
+    dt_str, subsec = _clean(dt_str), _clean(subsec)
     if not dt_str:
         return None
     try:
         # standard EXIF format: "2024:01:15 10:23:45"
-        dt = datetime.strptime(dt_str.strip("\x00 "), "%Y:%m:%d %H:%M:%S")
-        if subsec and subsec.strip("\x00 ").isdigit():
+        dt = datetime.strptime(dt_str, "%Y:%m:%d %H:%M:%S")
+        if subsec and subsec.isdigit():
             # subsec is a string like "123" meaning 0.123 seconds
-            dt += timedelta(seconds=float(f"0.{subsec.strip(chr(0) + ' ')}"))
+            dt += timedelta(seconds=float(f"0.{subsec}"))
         return dt
     except ValueError:
         return None
@@ -23,19 +31,28 @@ def _parse_timestamp(dt_str: str | None, subsec: str | None) -> datetime | None:
 
 def extract(path: Path) -> dict:
     """
-    Extract the capture timestamp from a single image file.
+    Extract capture metadata from a single image file.
 
     Returns a dict with keys:
       - timestamp : datetime | None
+      - camera_id : str | None   (make + model + body serial, identifies one camera body)
     """
-    result = {"timestamp": None}
+    result = {"timestamp": None, "camera_id": None}
     try:
         with Image.open(path) as img:
-            exif_ifd = img.getexif().get_ifd(ExifTags.IFD.Exif)
+            exif = img.getexif()
+            exif_ifd = exif.get_ifd(ExifTags.IFD.Exif)
         result["timestamp"] = _parse_timestamp(
             exif_ifd.get(ExifTags.Base.DateTimeOriginal),
             exif_ifd.get(ExifTags.Base.SubsecTimeOriginal),
         )
+        parts = [
+            _clean(exif.get(ExifTags.Base.Make)),
+            _clean(exif.get(ExifTags.Base.Model)),
+            _clean(exif_ifd.get(ExifTags.Base.BodySerialNumber)),
+        ]
+        if any(parts):
+            result["camera_id"] = " ".join(p for p in parts if p)
     except Exception as e:
         logger.warning("EXIF read failed for %s: %s", path, e)
     return result

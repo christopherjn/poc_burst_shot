@@ -3,7 +3,7 @@
     uv run python eval/evaluate.py --images DIR --labels eval/labels/sony_a7iv_portrait_100.json \
         --models efficientnet_b0 vit_small_patch14_dinov2.lvd142m
 
-Embeddings are cached under eval/.cache so re-runs only pay for clustering and verification.
+Embeddings are cached under eval/.cache so re-runs only pay for grouping.
 """
 import argparse
 import copy
@@ -26,7 +26,7 @@ CACHE_DIR = Path(__file__).parent / ".cache"
 TINY_IMAGE = "tinyimage"
 
 
-def _records_with_embeddings(paths: list[Path], model_name: str):
+def records_with_embeddings(paths: list[Path], model_name: str):
     records = build_records(paths)
     # the loader source is part of the key so preprocessing changes invalidate the cache
     key_src = "|".join(str(p) for p in paths) + model_name + inspect.getsource(image_loader)
@@ -69,9 +69,6 @@ def main() -> None:
     parser.add_argument("--images", type=Path, required=True)
     parser.add_argument("--labels", type=Path, required=True)
     parser.add_argument("--models", nargs="+", default=[DEFAULT_MODEL])
-    parser.add_argument("--stages", choices=["full", "all", "fast"], default="all",
-                        help="'all' also scores the pipeline with stages 2/3 switched off; "
-                             "'fast' skips the slow ORB verification variants")
     parser.add_argument("--show", action="store_true", help="print each predicted group with its true labels")
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING)
@@ -81,18 +78,12 @@ def main() -> None:
     print(f"{len(paths)} labelled images\n")
 
     variants = {
-        "cluster only": dict(verify=False, time_split=False),
-        "cluster+verify": dict(verify=True, time_split=False),
-        "cluster+time": dict(verify=False, time_split=True),
-        "full (cluster+verify+time)": dict(verify=True, time_split=True),
+        "defaults": {},
+        "window 1 (neighbours only)": dict(window=1),
     }
-    if args.stages == "full":
-        variants = {k: v for k, v in variants.items() if k.startswith("full")}
-    elif args.stages == "fast":
-        variants = {k: v for k, v in variants.items() if not v["verify"]}
 
     for model_name in args.models:
-        records, embed_s = _records_with_embeddings(paths, model_name)
+        records, embed_s = records_with_embeddings(paths, model_name)
         print(f"== {model_name}" + (f"  (embedding {embed_s:.1f}s)" if embed_s else "  (cached embeddings)"))
         for name, kwargs in variants.items():
             start = time.perf_counter()

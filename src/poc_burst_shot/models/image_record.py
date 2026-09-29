@@ -8,4 +8,5 @@ import numpy as np
 class ImageRecord:
     path: Path
     timestamp: datetime | None = None
+    camera_id: str | None = None
     embedding: np.ndarray | None = None

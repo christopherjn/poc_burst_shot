@@ -2,18 +2,19 @@ import logging
 import sys
 from pathlib import Path
 
-from poc_burst_shot.grouping.pipeline import run
-
-IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".tiff", ".tif", ".webp", ".bmp"}
+from poc_burst_shot.grouping.pipeline import SUPPORTED_SUFFIXES, run
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    try:
-        raw = input("Enter path to image folder: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print()
-        sys.exit(0)
+    if len(sys.argv) > 1:
+        raw = sys.argv[1]
+    else:
+        try:
+            raw = input("Enter path to image folder: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            sys.exit(0)
 
     folder = Path(raw).expanduser().resolve()
 
@@ -25,7 +26,7 @@ def main() -> None:
         print(f"Not a directory: {folder}")
         sys.exit(1)
 
-    paths = sorted(p for p in folder.iterdir() if p.suffix.lower() in IMAGE_SUFFIXES)
+    paths = sorted(p for p in folder.iterdir() if p.suffix.lower() in SUPPORTED_SUFFIXES)
 
     if not paths:
         print(f"No supported images found in: {folder}")
